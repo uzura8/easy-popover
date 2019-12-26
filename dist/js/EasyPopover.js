@@ -1434,8 +1434,6 @@
 	    var style = el.dataset.style != null ? el.dataset.style : '';
 	    var arrowStyle = el.dataset.arrowStyle != null ? el.dataset.arrowStyle : '';
 	    var content = el.dataset.content != null ? el.dataset.content : '';
-	    console.log(expiredDate); //!!!!!!
-
 	    var targetParamVal = EasyPopover.getUrlParam(targetParamName);
 	    var isTarget = false;
 
@@ -1445,20 +1443,11 @@
 	      }
 	    } else {
 	      isTarget = true;
-	    } //let isDisp = isTarget
-
+	    }
 
 	    var isDeleted = localStorage.getItem(strageName) == 1;
 	    var isExpired = expiredDate != '' && EasyPopover.isExpired(expiredDate);
-	    console.log(isDeleted); //!!!!!!
-
-	    console.log(isTarget); //!!!!!!
-
-	    console.log(isExpired); //!!!!!!
-
 	    var isDisp = !isDeleted && isTarget && !isExpired;
-	    console.log(isDisp); //!!!!!!
-
 	    if (!isDisp) return;
 
 	    if (container) {
