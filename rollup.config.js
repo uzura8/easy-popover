@@ -6,9 +6,9 @@ import nodeBuiltins from 'rollup-plugin-node-builtins'
 export default {
   input: 'src/js/index.js',
   output: {
-    file: 'dist/js/EasyScrollEffect.js',
+    file: 'dist/js/EasyPopover.js',
     format: 'umd',
-    name: 'EasyScrollEffect',
+    name: 'EasyPopover',
   },
   plugins: [
     babel({exclude: 'node_modules/**'}),

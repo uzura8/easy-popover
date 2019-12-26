@@ -1,13 +1,14 @@
-EasyScrollEffect
-================
+EasyPopover
+===========
 
-EasyScrollEffect - is easy and simple library for scrolling effect.
+EasyPopover - is easy and simple library for popover.
 It dosn't depend on a specific library.
-This library only add class for effect.
-You have to define style for each effect.
+It is intended to be used to describe elements on the pages of your site.
+On load page, popup automatically.
+
 
 ## Getting Started and Demos
-  * [Getting Started Guide and Demos](http://uzura.work/easy-scroll-effect/)
+  * [Getting Started Guide and Demos](http://uzura.work/easy-popover/)
 
 ## Dist / Build
 
