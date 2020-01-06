@@ -9,13 +9,13 @@ const EasyPopover = {
 
   init: function(scopeElm = null, eventType = '', options = {}) {
     this.options = Object.assign(this.optionsDef, options)
-    const selector = options.selector
-    const closeSelector = options.closeSelector
+    const selector = this.options.selector
+    const closeSelector = this.options.closeSelector
 
     if (eventType) {
       this.handleEvent(scopeElm, selector, eventType, this.openAll)
     } else {
-      this.openAll(scopeElm, selector)
+      this.openAll(null, scopeElm, selector)
     }
     this.handleEvent(scopeElm, closeSelector, 'click', this.close)
   },
@@ -27,8 +27,6 @@ const EasyPopover = {
 
     if (eventType) {
       this.handleEvent(scopeElm, selector, eventType, this.openAll, true)
-    } else {
-      this.openAll(scopeElm, selector)
     }
     this.handleEvent(scopeElm, closeSelector, 'click', this.close, true)
   },
@@ -47,7 +45,7 @@ const EasyPopover = {
     }
   },
 
-  openAll: function(scopeElm = null, selector = null) {
+  openAll: function(event, scopeElm = null, selector = null) {
     if (!scopeElm && this.scopeElm != null) scopeElm = this.scopeElm
     if (!selector && this.selector != null) selector = this.selector
     if (!scopeElm) scopeElm = document
@@ -57,7 +55,7 @@ const EasyPopover = {
     if (els == null || !els.length) return
 
     for (let i = 0, n = els.length; i < n; i++) {
-      this.open(els[i])
+      EasyPopover.open(els[i])
     }
   },
 
