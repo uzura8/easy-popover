@@ -4,10 +4,10 @@
       "@babel/preset-env",
       {
         "targets": {
-          "browsers": [">0.25% in JP", "not ie <= 10"],
+          "ie": 11
         },
         "modules": false,
-        "useBuiltIns": "entry",
+        "useBuiltIns": "usage",
         "corejs": 3
       }
     ]
