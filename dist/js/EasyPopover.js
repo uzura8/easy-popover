@@ -34,7 +34,7 @@
 
 	// Thank's IE8 for his funny defineProperty
 	var descriptors = !fails(function () {
-	  return Object.defineProperty({}, 'a', { get: function () { return 7; } }).a != 7;
+	  return Object.defineProperty({}, 1, { get: function () { return 7; } })[1] != 7;
 	});
 
 	var nativePropertyIsEnumerable = {}.propertyIsEnumerable;
@@ -215,9 +215,9 @@
 	(module.exports = function (key, value) {
 	  return sharedStore[key] || (sharedStore[key] = value !== undefined ? value : {});
 	})('versions', []).push({
-	  version: '3.5.0',
+	  version: '3.6.4',
 	  mode:  'global',
-	  copyright: '© 2019 Denis Pushkarev (zloirock.ru)'
+	  copyright: '© 2020 Denis Pushkarev (zloirock.ru)'
 	});
 	});
 
@@ -534,11 +534,11 @@
 	  // eslint-disable-next-line no-undef
 	  && !Symbol.sham
 	  // eslint-disable-next-line no-undef
-	  && typeof Symbol() == 'symbol';
+	  && typeof Symbol.iterator == 'symbol';
 
 	var WellKnownSymbolsStore = shared('wks');
 	var Symbol$1 = global_1.Symbol;
-	var createWellKnownSymbol = useSymbolAsUid ? Symbol$1 : uid;
+	var createWellKnownSymbol = useSymbolAsUid ? Symbol$1 : Symbol$1 && Symbol$1.withoutSetter || uid;
 
 	var wellKnownSymbol = function (name) {
 	  if (!has(WellKnownSymbolsStore, name)) {
@@ -567,48 +567,76 @@
 
 	var html = getBuiltIn('document', 'documentElement');
 
+	var GT = '>';
+	var LT = '<';
+	var PROTOTYPE = 'prototype';
+	var SCRIPT = 'script';
 	var IE_PROTO = sharedKey('IE_PROTO');
 
-	var PROTOTYPE = 'prototype';
-	var Empty = function () { /* empty */ };
+	var EmptyConstructor = function () { /* empty */ };
+
+	var scriptTag = function (content) {
+	  return LT + SCRIPT + GT + content + LT + '/' + SCRIPT + GT;
+	};
+
+	// Create object with fake `null` prototype: use ActiveX Object with cleared prototype
+	var NullProtoObjectViaActiveX = function (activeXDocument) {
+	  activeXDocument.write(scriptTag(''));
+	  activeXDocument.close();
+	  var temp = activeXDocument.parentWindow.Object;
+	  activeXDocument = null; // avoid memory leak
+	  return temp;
+	};
 
 	// Create object with fake `null` prototype: use iframe Object with cleared prototype
-	var createDict = function () {
+	var NullProtoObjectViaIFrame = function () {
 	  // Thrash, waste and sodomy: IE GC bug
 	  var iframe = documentCreateElement('iframe');
-	  var length = enumBugKeys.length;
-	  var lt = '<';
-	  var script = 'script';
-	  var gt = '>';
-	  var js = 'java' + script + ':';
+	  var JS = 'java' + SCRIPT + ':';
 	  var iframeDocument;
 	  iframe.style.display = 'none';
 	  html.appendChild(iframe);
-	  iframe.src = String(js);
+	  // https://github.com/zloirock/core-js/issues/475
+	  iframe.src = String(JS);
 	  iframeDocument = iframe.contentWindow.document;
 	  iframeDocument.open();
-	  iframeDocument.write(lt + script + gt + 'document.F=Object' + lt + '/' + script + gt);
+	  iframeDocument.write(scriptTag('document.F=Object'));
 	  iframeDocument.close();
-	  createDict = iframeDocument.F;
-	  while (length--) delete createDict[PROTOTYPE][enumBugKeys[length]];
-	  return createDict();
+	  return iframeDocument.F;
 	};
+
+	// Check for document.domain and active x support
+	// No need to use active x approach when document.domain is not set
+	// see https://github.com/es-shims/es5-shim/issues/150
+	// variation of https://github.com/kitcambridge/es5-shim/commit/4f738ac066346
+	// avoid IE GC bug
+	var activeXDocument;
+	var NullProtoObject = function () {
+	  try {
+	    /* global ActiveXObject */
+	    activeXDocument = document.domain && new ActiveXObject('htmlfile');
+	  } catch (error) { /* ignore */ }
+	  NullProtoObject = activeXDocument ? NullProtoObjectViaActiveX(activeXDocument) : NullProtoObjectViaIFrame();
+	  var length = enumBugKeys.length;
+	  while (length--) delete NullProtoObject[PROTOTYPE][enumBugKeys[length]];
+	  return NullProtoObject();
+	};
+
+	hiddenKeys[IE_PROTO] = true;
 
 	// `Object.create` method
 	// https://tc39.github.io/ecma262/#sec-object.create
 	var objectCreate = Object.create || function create(O, Properties) {
 	  var result;
 	  if (O !== null) {
-	    Empty[PROTOTYPE] = anObject(O);
-	    result = new Empty();
-	    Empty[PROTOTYPE] = null;
+	    EmptyConstructor[PROTOTYPE] = anObject(O);
+	    result = new EmptyConstructor();
+	    EmptyConstructor[PROTOTYPE] = null;
 	    // add "__proto__" for Object.getPrototypeOf polyfill
 	    result[IE_PROTO] = O;
-	  } else result = createDict();
+	  } else result = NullProtoObject();
 	  return Properties === undefined ? result : objectDefineProperties(result, Properties);
 	};
-
-	hiddenKeys[IE_PROTO] = true;
 
 	var UNSCOPABLES = wellKnownSymbol('unscopables');
 	var ArrayPrototype = Array.prototype;
@@ -616,7 +644,10 @@
 	// Array.prototype[@@unscopables]
 	// https://tc39.github.io/ecma262/#sec-array.prototype-@@unscopables
 	if (ArrayPrototype[UNSCOPABLES] == undefined) {
-	  createNonEnumerableProperty(ArrayPrototype, UNSCOPABLES, objectCreate(null));
+	  objectDefineProperty.f(ArrayPrototype, UNSCOPABLES, {
+	    configurable: true,
+	    value: objectCreate(null)
+	  });
 	}
 
 	// add a key to Array.prototype[@@unscopables]
@@ -624,12 +655,39 @@
 	  ArrayPrototype[UNSCOPABLES][key] = true;
 	};
 
+	var defineProperty = Object.defineProperty;
+	var cache = {};
+
+	var thrower = function (it) { throw it; };
+
+	var arrayMethodUsesToLength = function (METHOD_NAME, options) {
+	  if (has(cache, METHOD_NAME)) return cache[METHOD_NAME];
+	  if (!options) options = {};
+	  var method = [][METHOD_NAME];
+	  var ACCESSORS = has(options, 'ACCESSORS') ? options.ACCESSORS : false;
+	  var argument0 = has(options, 0) ? options[0] : thrower;
+	  var argument1 = has(options, 1) ? options[1] : undefined;
+
+	  return cache[METHOD_NAME] = !!method && !fails(function () {
+	    if (ACCESSORS && !descriptors) return true;
+	    var O = { length: -1 };
+
+	    if (ACCESSORS) defineProperty(O, 1, { enumerable: true, get: thrower });
+	    else O[1] = 1;
+
+	    method.call(O, argument0, argument1);
+	  });
+	};
+
 	var $includes = arrayIncludes.includes;
 
 
+
+	var USES_TO_LENGTH = arrayMethodUsesToLength('indexOf', { ACCESSORS: true, 1: 0 });
+
 	// `Array.prototype.includes` method
 	// https://tc39.github.io/ecma262/#sec-array.prototype.includes
-	_export({ target: 'Array', proto: true }, {
+	_export({ target: 'Array', proto: true, forced: !USES_TO_LENGTH }, {
 	  includes: function includes(el /* , fromIndex = 0 */) {
 	    return $includes(this, el, arguments.length > 1 ? arguments[1] : undefined);
 	  }
@@ -638,7 +696,7 @@
 	// https://tc39.github.io/ecma262/#sec-array.prototype-@@unscopables
 	addToUnscopables('includes');
 
-	var defineProperty = objectDefineProperty.f;
+	var defineProperty$1 = objectDefineProperty.f;
 
 	var FunctionPrototype = Function.prototype;
 	var FunctionPrototypeToString = FunctionPrototype.toString;
@@ -648,7 +706,7 @@
 	// Function instances `.name` property
 	// https://tc39.github.io/ecma262/#sec-function-instances-name
 	if (descriptors && !(NAME in FunctionPrototype)) {
-	  defineProperty(FunctionPrototype, NAME, {
+	  defineProperty$1(FunctionPrototype, NAME, {
 	    configurable: true,
 	    get: function () {
 	      try {
@@ -667,16 +725,16 @@
 	};
 
 	var nativeAssign = Object.assign;
-	var defineProperty$1 = Object.defineProperty;
+	var defineProperty$2 = Object.defineProperty;
 
 	// `Object.assign` method
 	// https://tc39.github.io/ecma262/#sec-object.assign
 	var objectAssign = !nativeAssign || fails(function () {
 	  // should have correct order of operations (Edge bug)
-	  if (descriptors && nativeAssign({ b: 1 }, nativeAssign(defineProperty$1({}, 'a', {
+	  if (descriptors && nativeAssign({ b: 1 }, nativeAssign(defineProperty$2({}, 'a', {
 	    enumerable: true,
 	    get: function () {
-	      defineProperty$1(this, 'b', {
+	      defineProperty$2(this, 'b', {
 	        value: 3,
 	        enumerable: false
 	      });
@@ -782,6 +840,31 @@
 	  return result;
 	};
 
+	// babel-minify transpiles RegExp('a', 'y') -> /a/y and it causes SyntaxError,
+	// so we use an intermediate function.
+	function RE(s, f) {
+	  return RegExp(s, f);
+	}
+
+	var UNSUPPORTED_Y = fails(function () {
+	  // babel-minify transpiles RegExp('a', 'y') -> /a/y and it causes SyntaxError
+	  var re = RE('a', 'y');
+	  re.lastIndex = 2;
+	  return re.exec('abcd') != null;
+	});
+
+	var BROKEN_CARET = fails(function () {
+	  // https://bugzilla.mozilla.org/show_bug.cgi?id=773687
+	  var re = RE('^r', 'gy');
+	  re.lastIndex = 2;
+	  return re.exec('str') != null;
+	});
+
+	var regexpStickyHelpers = {
+		UNSUPPORTED_Y: UNSUPPORTED_Y,
+		BROKEN_CARET: BROKEN_CARET
+	};
+
 	var SPECIES = wellKnownSymbol('species');
 
 	var setSpecies = function (CONSTRUCTOR_NAME) {
@@ -796,12 +879,14 @@
 	  }
 	};
 
-	var defineProperty$2 = objectDefineProperty.f;
+	var defineProperty$3 = objectDefineProperty.f;
 	var getOwnPropertyNames = objectGetOwnPropertyNames.f;
 
 
 
 
+
+	var setInternalState = internalState.set;
 
 
 
@@ -814,7 +899,9 @@
 	// "new" should create a new object, old webkit bug
 	var CORRECT_NEW = new NativeRegExp(re1) !== re1;
 
-	var FORCED = descriptors && isForced_1('RegExp', (!CORRECT_NEW || fails(function () {
+	var UNSUPPORTED_Y$1 = regexpStickyHelpers.UNSUPPORTED_Y;
+
+	var FORCED = descriptors && isForced_1('RegExp', (!CORRECT_NEW || UNSUPPORTED_Y$1 || fails(function () {
 	  re2[MATCH$1] = false;
 	  // RegExp constructor can alter flags and IsRegExp works correct with @@match
 	  return NativeRegExp(re1) != re1 || NativeRegExp(re2) == re2 || NativeRegExp(re1, 'i') != '/a/i';
@@ -827,16 +914,36 @@
 	    var thisIsRegExp = this instanceof RegExpWrapper;
 	    var patternIsRegExp = isRegexp(pattern);
 	    var flagsAreUndefined = flags === undefined;
-	    return !thisIsRegExp && patternIsRegExp && pattern.constructor === RegExpWrapper && flagsAreUndefined ? pattern
-	      : inheritIfRequired(CORRECT_NEW
-	        ? new NativeRegExp(patternIsRegExp && !flagsAreUndefined ? pattern.source : pattern, flags)
-	        : NativeRegExp((patternIsRegExp = pattern instanceof RegExpWrapper)
-	          ? pattern.source
-	          : pattern, patternIsRegExp && flagsAreUndefined ? regexpFlags.call(pattern) : flags)
-	      , thisIsRegExp ? this : RegExpPrototype, RegExpWrapper);
+	    var sticky;
+
+	    if (!thisIsRegExp && patternIsRegExp && pattern.constructor === RegExpWrapper && flagsAreUndefined) {
+	      return pattern;
+	    }
+
+	    if (CORRECT_NEW) {
+	      if (patternIsRegExp && !flagsAreUndefined) pattern = pattern.source;
+	    } else if (pattern instanceof RegExpWrapper) {
+	      if (flagsAreUndefined) flags = regexpFlags.call(pattern);
+	      pattern = pattern.source;
+	    }
+
+	    if (UNSUPPORTED_Y$1) {
+	      sticky = !!flags && flags.indexOf('y') > -1;
+	      if (sticky) flags = flags.replace(/y/g, '');
+	    }
+
+	    var result = inheritIfRequired(
+	      CORRECT_NEW ? new NativeRegExp(pattern, flags) : NativeRegExp(pattern, flags),
+	      thisIsRegExp ? this : RegExpPrototype,
+	      RegExpWrapper
+	    );
+
+	    if (UNSUPPORTED_Y$1 && sticky) setInternalState(result, { sticky: sticky });
+
+	    return result;
 	  };
 	  var proxy = function (key) {
-	    key in RegExpWrapper || defineProperty$2(RegExpWrapper, key, {
+	    key in RegExpWrapper || defineProperty$3(RegExpWrapper, key, {
 	      configurable: true,
 	      get: function () { return NativeRegExp[key]; },
 	      set: function (it) { NativeRegExp[key] = it; }
@@ -852,6 +959,94 @@
 
 	// https://tc39.github.io/ecma262/#sec-get-regexp-@@species
 	setSpecies('RegExp');
+
+	var nativeExec = RegExp.prototype.exec;
+	// This always refers to the native implementation, because the
+	// String#replace polyfill uses ./fix-regexp-well-known-symbol-logic.js,
+	// which loads this file before patching the method.
+	var nativeReplace = String.prototype.replace;
+
+	var patchedExec = nativeExec;
+
+	var UPDATES_LAST_INDEX_WRONG = (function () {
+	  var re1 = /a/;
+	  var re2 = /b*/g;
+	  nativeExec.call(re1, 'a');
+	  nativeExec.call(re2, 'a');
+	  return re1.lastIndex !== 0 || re2.lastIndex !== 0;
+	})();
+
+	var UNSUPPORTED_Y$2 = regexpStickyHelpers.UNSUPPORTED_Y || regexpStickyHelpers.BROKEN_CARET;
+
+	// nonparticipating capturing group, copied from es5-shim's String#split patch.
+	var NPCG_INCLUDED = /()??/.exec('')[1] !== undefined;
+
+	var PATCH = UPDATES_LAST_INDEX_WRONG || NPCG_INCLUDED || UNSUPPORTED_Y$2;
+
+	if (PATCH) {
+	  patchedExec = function exec(str) {
+	    var re = this;
+	    var lastIndex, reCopy, match, i;
+	    var sticky = UNSUPPORTED_Y$2 && re.sticky;
+	    var flags = regexpFlags.call(re);
+	    var source = re.source;
+	    var charsAdded = 0;
+	    var strCopy = str;
+
+	    if (sticky) {
+	      flags = flags.replace('y', '');
+	      if (flags.indexOf('g') === -1) {
+	        flags += 'g';
+	      }
+
+	      strCopy = String(str).slice(re.lastIndex);
+	      // Support anchored sticky behavior.
+	      if (re.lastIndex > 0 && (!re.multiline || re.multiline && str[re.lastIndex - 1] !== '\n')) {
+	        source = '(?: ' + source + ')';
+	        strCopy = ' ' + strCopy;
+	        charsAdded++;
+	      }
+	      // ^(? + rx + ) is needed, in combination with some str slicing, to
+	      // simulate the 'y' flag.
+	      reCopy = new RegExp('^(?:' + source + ')', flags);
+	    }
+
+	    if (NPCG_INCLUDED) {
+	      reCopy = new RegExp('^' + source + '$(?!\\s)', flags);
+	    }
+	    if (UPDATES_LAST_INDEX_WRONG) lastIndex = re.lastIndex;
+
+	    match = nativeExec.call(sticky ? reCopy : re, strCopy);
+
+	    if (sticky) {
+	      if (match) {
+	        match.input = match.input.slice(charsAdded);
+	        match[0] = match[0].slice(charsAdded);
+	        match.index = re.lastIndex;
+	        re.lastIndex += match[0].length;
+	      } else re.lastIndex = 0;
+	    } else if (UPDATES_LAST_INDEX_WRONG && match) {
+	      re.lastIndex = re.global ? match.index + match[0].length : lastIndex;
+	    }
+	    if (NPCG_INCLUDED && match && match.length > 1) {
+	      // Fix browsers whose `exec` methods don't consistently return `undefined`
+	      // for NPCG, like IE8. NOTE: This doesn' work for /(.?)?/
+	      nativeReplace.call(match[0], reCopy, function () {
+	        for (i = 1; i < arguments.length - 2; i++) {
+	          if (arguments[i] === undefined) match[i] = undefined;
+	        }
+	      });
+	    }
+
+	    return match;
+	  };
+	}
+
+	var regexpExec = patchedExec;
+
+	_export({ target: 'RegExp', proto: true, forced: /./.exec !== regexpExec }, {
+	  exec: regexpExec
+	});
 
 	var TO_STRING = 'toString';
 	var RegExpPrototype$1 = RegExp.prototype;
@@ -902,57 +1097,13 @@
 	  }
 	});
 
-	var nativeExec = RegExp.prototype.exec;
-	// This always refers to the native implementation, because the
-	// String#replace polyfill uses ./fix-regexp-well-known-symbol-logic.js,
-	// which loads this file before patching the method.
-	var nativeReplace = String.prototype.replace;
+	// TODO: Remove from `core-js@4` since it's moved to entry points
 
-	var patchedExec = nativeExec;
 
-	var UPDATES_LAST_INDEX_WRONG = (function () {
-	  var re1 = /a/;
-	  var re2 = /b*/g;
-	  nativeExec.call(re1, 'a');
-	  nativeExec.call(re2, 'a');
-	  return re1.lastIndex !== 0 || re2.lastIndex !== 0;
-	})();
 
-	// nonparticipating capturing group, copied from es5-shim's String#split patch.
-	var NPCG_INCLUDED = /()??/.exec('')[1] !== undefined;
 
-	var PATCH = UPDATES_LAST_INDEX_WRONG || NPCG_INCLUDED;
 
-	if (PATCH) {
-	  patchedExec = function exec(str) {
-	    var re = this;
-	    var lastIndex, reCopy, match, i;
 
-	    if (NPCG_INCLUDED) {
-	      reCopy = new RegExp('^' + re.source + '$(?!\\s)', regexpFlags.call(re));
-	    }
-	    if (UPDATES_LAST_INDEX_WRONG) lastIndex = re.lastIndex;
-
-	    match = nativeExec.call(re, str);
-
-	    if (UPDATES_LAST_INDEX_WRONG && match) {
-	      re.lastIndex = re.global ? match.index + match[0].length : lastIndex;
-	    }
-	    if (NPCG_INCLUDED && match && match.length > 1) {
-	      // Fix browsers whose `exec` methods don't consistently return `undefined`
-	      // for NPCG, like IE8. NOTE: This doesn' work for /(.?)?/
-	      nativeReplace.call(match[0], reCopy, function () {
-	        for (i = 1; i < arguments.length - 2; i++) {
-	          if (arguments[i] === undefined) match[i] = undefined;
-	        }
-	      });
-	    }
-
-	    return match;
-	  };
-	}
-
-	var regexpExec = patchedExec;
 
 	var SPECIES$1 = wellKnownSymbol('species');
 
@@ -968,6 +1119,21 @@
 	  };
 	  return ''.replace(re, '$<a>') !== '7';
 	});
+
+	// IE <= 11 replaces $0 with the whole match, as if it was $&
+	// https://stackoverflow.com/questions/6024666/getting-ie-to-replace-a-regex-with-the-literal-string-0
+	var REPLACE_KEEPS_$0 = (function () {
+	  return 'a'.replace(/./, '$0') === '$0';
+	})();
+
+	var REPLACE = wellKnownSymbol('replace');
+	// Safari <= 13.0.3(?) substitutes nth capture where n>m with an empty string
+	var REGEXP_REPLACE_SUBSTITUTES_UNDEFINED_CAPTURE = (function () {
+	  if (/./[REPLACE]) {
+	    return /./[REPLACE]('a', '$0') === '';
+	  }
+	  return false;
+	})();
 
 	// Chrome 51 has a buggy "split" implementation when RegExp#exec !== nativeExec
 	// Weex JS has frozen built-in prototypes, so use try / catch wrapper
@@ -1016,7 +1182,11 @@
 	  if (
 	    !DELEGATES_TO_SYMBOL ||
 	    !DELEGATES_TO_EXEC ||
-	    (KEY === 'replace' && !REPLACE_SUPPORTS_NAMED_GROUPS) ||
+	    (KEY === 'replace' && !(
+	      REPLACE_SUPPORTS_NAMED_GROUPS &&
+	      REPLACE_KEEPS_$0 &&
+	      !REGEXP_REPLACE_SUBSTITUTES_UNDEFINED_CAPTURE
+	    )) ||
 	    (KEY === 'split' && !SPLIT_WORKS_WITH_OVERWRITTEN_EXEC)
 	  ) {
 	    var nativeRegExpMethod = /./[SYMBOL];
@@ -1031,6 +1201,9 @@
 	        return { done: true, value: nativeMethod.call(str, regexp, arg2) };
 	      }
 	      return { done: false };
+	    }, {
+	      REPLACE_KEEPS_$0: REPLACE_KEEPS_$0,
+	      REGEXP_REPLACE_SUBSTITUTES_UNDEFINED_CAPTURE: REGEXP_REPLACE_SUBSTITUTES_UNDEFINED_CAPTURE
 	    });
 	    var stringMethod = methods[0];
 	    var regexMethod = methods[1];
@@ -1044,8 +1217,9 @@
 	      // 21.2.5.9 RegExp.prototype[@@search](string)
 	      : function (string) { return regexMethod.call(string, this); }
 	    );
-	    if (sham) createNonEnumerableProperty(RegExp.prototype[SYMBOL], 'sham', true);
 	  }
+
+	  if (sham) createNonEnumerableProperty(RegExp.prototype[SYMBOL], 'sham', true);
 	};
 
 	// `String.prototype.{ codePointAt, at }` methods implementation
@@ -1111,7 +1285,11 @@
 	};
 
 	// @@replace logic
-	fixRegexpWellKnownSymbolLogic('replace', 2, function (REPLACE, nativeReplace, maybeCallNative) {
+	fixRegexpWellKnownSymbolLogic('replace', 2, function (REPLACE, nativeReplace, maybeCallNative, reason) {
+	  var REGEXP_REPLACE_SUBSTITUTES_UNDEFINED_CAPTURE = reason.REGEXP_REPLACE_SUBSTITUTES_UNDEFINED_CAPTURE;
+	  var REPLACE_KEEPS_$0 = reason.REPLACE_KEEPS_$0;
+	  var UNSAFE_SUBSTITUTE = REGEXP_REPLACE_SUBSTITUTES_UNDEFINED_CAPTURE ? '$' : '$0';
+
 	  return [
 	    // `String.prototype.replace` method
 	    // https://tc39.github.io/ecma262/#sec-string.prototype.replace
@@ -1125,8 +1303,13 @@
 	    // `RegExp.prototype[@@replace]` method
 	    // https://tc39.github.io/ecma262/#sec-regexp.prototype-@@replace
 	    function (regexp, replaceValue) {
-	      var res = maybeCallNative(nativeReplace, regexp, this, replaceValue);
-	      if (res.done) return res.value;
+	      if (
+	        (!REGEXP_REPLACE_SUBSTITUTES_UNDEFINED_CAPTURE && REPLACE_KEEPS_$0) ||
+	        (typeof replaceValue === 'string' && replaceValue.indexOf(UNSAFE_SUBSTITUTE) === -1)
+	      ) {
+	        var res = maybeCallNative(nativeReplace, regexp, this, replaceValue);
+	        if (res.done) return res.value;
+	      }
 
 	      var rx = anObject(regexp);
 	      var S = String(this);

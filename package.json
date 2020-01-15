@@ -33,7 +33,7 @@
     "babel-preset-env": "^1.7.0",
     "babel-preset-es2015-rollup": "^3.0.0",
     "commonjs": "0.0.1",
-    "core-js": "^3.5.0",
+    "core-js": "^3.6.4",
     "eslint": "^6.7.2",
     "rollup": "^1.27.13",
     "rollup-plugin-babel": "^4.3.3",
