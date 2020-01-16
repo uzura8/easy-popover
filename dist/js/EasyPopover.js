@@ -1639,7 +1639,7 @@
 	          containerEl.style.position = 'relative';
 	        }
 
-	        containerEl.append(el);
+	        containerEl.appendChild(el);
 	      }
 	    }
 

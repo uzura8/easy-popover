@@ -92,7 +92,7 @@ const EasyPopover = {
         if (containerEl.style.position != 'relative') {
           containerEl.style.position = 'relative'
         }
-        containerEl.append(el)
+        containerEl.appendChild(el)
       }
     }
     if (style) el.setAttribute('style', style)
